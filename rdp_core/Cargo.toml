@@ -4,3 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+scrap = "0.5.0"
+turbojpeg = "0.4.1"
+[lib]
+name = "rdp_core"
+crate-type = ["cdylib"]
