@@ -5,4 +5,5 @@ pyobjc-framework-ApplicationServices==11.1
 pyobjc-framework-Cocoa==11.1
 pyobjc-framework-CoreText==11.1
 pyobjc-framework-Quartz==11.1
+python-dotenv==1.1.1
 six==1.17.0
