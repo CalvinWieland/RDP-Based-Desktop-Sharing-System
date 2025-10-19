@@ -1,11 +1,14 @@
 # We import socket for networking, time for pausing, ctypes for talking to Rust, platform to detect the OS, select for non-blocking network I/O
 # pathlib for robust file paths, and sys to exit the program on critical errors.
 import socket, time, ctypes, platform, select, pathlib, sys
+import os
+from dotenv import load_dotenv
 
 # configuration
-SERVER_IP = '40.160.241.226'
-SERVER_PORT = 50000
-SESSION_CODE = "super-secret-123"
+# Get variables from the environment, with fallback defaults
+SERVER_IP = os.getenv("SERVER_IP", "127.0.0.1")
+SERVER_PORT = int(os.getenv("SERVER_PORT", 50000))
+SESSION_CODE = os.getenv("SESSION_CODE", "default-code")
 
 # Python's exact mirror of the Rust RawImage struct.
 # ctypes.Structure is the base, and field defines the memory layout.
