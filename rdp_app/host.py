@@ -13,7 +13,7 @@ load_dotenv()
 # Get variables from the environment, with fallback defaults
 SERVER_IP = os.getenv("SERVER_IP", "127.0.0.1")
 SERVER_PORT = int(os.getenv("SERVER_PORT", 50000))
-SESSION_CODE = os.getenv("SESSION_CODE", "default-code")
+SESSION_CODE = os.getenv("SESSION_CODE")
 
 # --- Ctypes Bridge Definition ---
 # Python's exact mirror of the Rust RawImage struct.
