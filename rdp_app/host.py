@@ -1,114 +1,147 @@
-# rdp_app/host.py
-
-# We import socket for networking, time for pausing, ctypes for talking to Rust, platform to detect the OS, select for non-blocking network I/O
-# pathlib for robust file paths, and sys to exit the program on critical errors.
-import socket, time, ctypes, platform, select, pathlib, sys
-import os
+import socket
+import pyautogui
+from PIL import Image
+import io
+import threading
+import time
 from dotenv import load_dotenv
+import os
 
-# --- Load .env file ---
 load_dotenv()
 
-# --- Configuration ---
-# Get variables from the environment, with fallback defaults
-SERVER_IP = os.getenv("SERVER_IP", "127.0.0.1")
-SERVER_PORT = int(os.getenv("SERVER_PORT", 50000))
-SESSION_CODE = os.getenv("SESSION_CODE")
+SERVER_IP = os.getenv("SERVER_IP")
+SERVER_PORT = int(os.getenv("SERVER_PORT"))
 
-# --- Ctypes Bridge Definition ---
-# Python's exact mirror of the Rust RawImage struct.
-# ctypes.Structure is the base, and field defines the memory layout.
-class RawImage(ctypes.Structure):
-    # POINTER(c_uint8) matches *mut u8, and c_size_t matches usize.
-    _fields_ = [("data", ctypes.POINTER(ctypes.c_uint8)),
-                ("len", ctypes.c_size_t)]
-    
-def get_rust_library():
-    "Loads the compiled library using a robust, absolute path"
-    script_dir = pathlib.Path(__file__).parent.resolve() # gets path to the current script, '.parent' navigates up to the rdp_app dir., 
-    # '.resolve()' gets the full, absolute path.
-    project_root = script_dir.parent # Navigates up again to the project's root folder.
-    
-    if platform.system() == "Windows":
-        lib_name = "rdp_core.dll"
-    elif platform.system() == "Darwin":
-        lib_name = "librdp_core.dylib"
-    else:
-        lib_name = "librdp_core.so"
+print("SERVER_IP: ", SERVER_IP)
+print("SERVER_PORT: ", SERVER_PORT)
 
-    # OS detection
-    lib_path = project_root / "rdp_core" / "target" / "release" / lib_name # The '/' operator from pathlib is used to build a path in an OS-agnostic way.
-    
-    # DEBUG: Print the path we are trying to load
-    print(f"Attempting to load library from: {lib_path}")
-    
-    rdp_lib = ctypes.CDLL(str(lib_path)) # Command that loads our compiler Rust library into memory.
+running = True
 
-    # Explicitly define the function signatures. It tells ctypes what data types to expect and return.
-    rdp_lib.capture_and_encode.argtypes = [ctypes.c_uint32, ctypes.c_uint32] # Use unsigned int
-    rdp_lib.capture_and_encode.restype = ctypes.POINTER(RawImage)
-    rdp_lib.free_image.argtypes = [ctypes.POINTER(RawImage)]
+# this gets logical pixels of computer
+LOGICAL_WIDTH, LOGICAL_HEIGHT = pyautogui.size()
 
-    return rdp_lib
+# scale factor for logical pixels to actual pixel conversion
+SCALE_X = 1.0
+SCALE_Y = 1.0
+
+def calculate_scale_factor():
+    # there's a difference between logical pixels and actual pixels, this is the scale factor for conversion
+    global SCALE_X, SCALE_Y
+    try:
+        # take a screenshoot to get actual screen width
+        screenshot = pyautogui.screenshot()
+        phys_w, phys_h = screenshot.size
+        
+        SCALE_X = phys_w / LOGICAL_WIDTH
+        SCALE_Y = phys_h / LOGICAL_HEIGHT
+        
+        # write down screen sizes
+        print(f"Screen size information:")
+        print(f"  Logical pixel width x height:   {LOGICAL_WIDTH}x{LOGICAL_HEIGHT}")
+        print(f"  Actual screen resolution:  {phys_w}x{phys_h}")
+        print(f"  Scale Factor:       {SCALE_X:.2f}x, {SCALE_Y:.2f}x")
+    except Exception as e:
+        print("Error in getting screen sizes/scale factor: ", e)
+
+def send_screen(conn):
+    global running
+    while running:
+        try:
+            # capture screen
+            screenshot = pyautogui.screenshot()
+            
+            # convert and send screenshot
+            screenshot = screenshot.convert('RGB')
+            buf = io.BytesIO()
+            screenshot.save(buf, format='JPEG', quality=50)
+            data = buf.getvalue()
+            size = len(data).to_bytes(4, 'big')
+            conn.sendall(size + data)
+        except (BrokenPipeError, ConnectionResetError):
+            print("Exception thrown in send screen loop")
+            running = False
+            break
+        except Exception as e:
+            print("Error in send screen loop: ", e)
+            running = False
+            break
+        time.sleep(0.03)
+
+def receive_input(conn):
+    global running
+    while running:
+        try:
+            data = conn.recv(1024)
+            if not data:
+                print("[HOST] Viewer disconnected (input thread)")
+                running = False
+                break
+
+            for line in data.decode().splitlines():
+                parts = line.split()
+                if not parts: continue
+
+                if parts[0] == 'CLICK' and len(parts) == 4:
+                    _, btn_str, x_str, y_str = parts
+                    try:
+                        # gets physcial pixel placement of mouse
+                        pixel_x = int(x_str)
+                        pixel_y = int(y_str)
+                        
+                        # convert coordinates to logical coordinates by scale factor
+                        logical_x = int(pixel_x / SCALE_X)
+                        logical_y = int(pixel_y / SCALE_Y)
+
+                        # convert instruction into compatible form
+                        mouse_btn = btn_str.replace("Button.", "").lower()
+                        if mouse_btn not in ['left', 'right', 'middle']:
+                            mouse_btn = 'left'
+
+                        # check we aren't clicking outside of the screen
+                        logical_x = max(0, min(logical_x, LOGICAL_WIDTH - 1))
+                        logical_y = max(0, min(logical_y, LOGICAL_HEIGHT - 1))
+
+                        pyautogui.click(x=logical_x, y=logical_y, button=mouse_btn)
+                        
+                    except ValueError:
+                        print("Error in click")
+
+        except (BrokenPipeError, ConnectionResetError):
+            running = False
+            break
+        except Exception as e:
+            print("Input error: ", e)
+            running = False
+            break
 
 def main():
-    # wrap the library loading in a try...except block. If the file is missing or corrupted, ctypes.CDLL will raise an OSError.
+    global running
+    
+    # calculate logical scale factor
+    calculate_scale_factor()
+    
+    conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        rdp_lib = get_rust_library()
-        print("Successfully loaded Rust Library.")
-    except OSError as e:
-        print("\n-- FATAL ERROR --")
-        print(f"Failed to load the Rust library: {e}")
-        print("\nPlease check the following:")
-        print("1. Does the file mentioned above actually exist?")
-        print("2. Did you run 'cargo build --release' in the 'rdp_core' directory?")
-        sys.exit(1)
+        conn.connect((SERVER_IP, SERVER_PORT))
+        conn.sendall(b'HOST')
+        print("Connected to server")
+    except Exception as e:
+        print("Error in connecting: ", e)
+        return
 
-    # --- Connection and Authentication ---
+    # multithread sending screen and receiving input
+    threading.Thread(target=send_screen, args=(conn,), daemon=True).start()
+    threading.Thread(target=receive_input, args=(conn,), daemon=True).start()
+
+    print("Host is running")
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.connect((SERVER_IP, SERVER_PORT))
-            print("Connected. Authenticating...")
-            auth_message = f"HOST,{SESSION_CODE}" # Removed extra space
-            s.sendall(auth_message.encode('utf-8'))
-            print(f"Authenticated with session code: '{SESSION_CODE}'.")
-        
-            # --- Main Streaming Loop (CORRECTED: INDENTED) ---
-            target_resolution = (0, 0)
-            while True:
-                # 1. Listen for commands from the server (non-blocking)
-                ready_to_read, _,  _ = select.select([s], [], [], 0.01)
-
-                if ready_to_read:
-                    command_raw = s.recv(1024)
-                    if not command_raw: break
-                    command = command_raw.decode('utf-8').strip()
-                    parts = command.split(',')
-                    if parts[0] == "set_resolution" and len(parts) == 3:
-                        target_resolution = (int(parts[1]), int(parts[2]))
-                        print(f"Resolution changed to {target_resolution}")
-                
-                # 2. Call Rust to capture, resize, and encode.
-                raw_image_ptr = rdp_lib.capture_and_encode(target_resolution[0], target_resolution[1])
-                if raw_image_ptr:
-                    try:
-                        # Use slicing and bytes() conversion
-                        jpeg_data = bytes(raw_image_ptr.contents.data[:raw_image_ptr.contents.len])
-                        
-                        size_bytes = len(jpeg_data).to_bytes(4, 'big')
-                        s.sendall(size_bytes)
-                        s.sendall(jpeg_data)
-                    finally:
-                        rdp_lib.free_image(raw_image_ptr)
-                
-                time.sleep(0.033) # ~30 FPS
-                
-    except ConnectionRefusedError:
-        print("Connection failed. Is the server script running?")
-    except (ConnectionResetError, BrokenPipeError):
-        print("\nConnection to server lost.")
+        while running:
+            time.sleep(0.1)
     except KeyboardInterrupt:
-        print("\nHost application stopped by user.")
+        print("\nshutting down")
+        running = False
+
+    conn.close()
 
 if __name__ == "__main__":
     main()
