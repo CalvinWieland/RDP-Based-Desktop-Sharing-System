@@ -117,7 +117,7 @@ export default function RemoteDesktopPage() {
               </div>
                */}
 
-              <button className="rdp-button" onClick={handleStartHosting} disabled={!username || !password}>
+              <button className="rdp-button" onClick={handleStartHosting}>
                 Start Hosting
               </button>
             </div>
@@ -190,7 +190,6 @@ export default function RemoteDesktopPage() {
               <button
                 className="rdp-button"
                 onClick={handleJoinSession}
-                disabled={!username || !password || !sessionId}
               >
                 Join Session
               </button>
