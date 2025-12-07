@@ -1,78 +1,90 @@
-# cloud_server.py
-
 import socket
-import sys
+import threading
 
-def receive_all(sock, length):
+waiting_hosts = {}
+
+def forward_stream(source, dest, description):
+    """Continuously reads from source and writes to dest."""
+    try:
+        while True:
+            data = source.recv(4096)
+            if not data: break
+            dest.sendall(data)
+    except Exception:
+        pass
+    finally:
+        print(f"{description} closed.")
+        source.close()
+        dest.close()
+
+def handle_client(conn, addr):
     """
-    Helper function to reliably receive an exact number of bytes.
-    This is critical for reading our 'framed' data (size + image).
+    First message from each connection must be:
+        HOST,<SESSION_CODE>\n
+    or
+        CLIENT,<SESSION_CODE>\n
+
+    Based on this, we either:
+      - Register a host in `waiting_hosts`
+      - Match a client with a host and start forwarding threads
     """
-    data = bytearray()
-    while len(data) < length:
-        # Request the remaining number of bytes
-        packet = sock.recv(length - len(data))
-        if not packet:
-            # Connection was lost before we got all the data
-            return None
-        data.extend(packet)
-    return data
+    global waiting_hosts
+    print(f"New connection from {addr}")
+    
+    try:
+        raw_data = conn.recv(1024).decode('utf-8')
+        if not raw_data:
+            return
 
-def run_server():
-    HOST = '0.0.0.0' # Listen on all network interfaces
-    PORT = 50000     # The port your host is connecting to
+        auth_line = raw_data.split('\n')[0].strip()
+        
+        if ',' not in auth_line:
+            print(f"Invalid auth format from {addr}: {auth_line}")
+            conn.close()
+            return
 
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        role, code = auth_line.split(',')
         
-        # --- This line helps prevent "Address already in use" ---
-        # It tells the OS to reuse the port even if it's in a timeout state
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        # ---------------------------------------------------------
-        
-        try:
-            s.bind((HOST, PORT))
-            s.listen()
-            print(f"Server is listening on {HOST}:{PORT}...")
+        if role == "HOST":
+            print(f"HOST registered for session: {code}")
+            waiting_hosts[code] = conn
             
-            conn, addr = s.accept()
-            with conn:
-                print(f"Host connected from {addr}")
+        elif role == "CLIENT":
+            print(f"CLIENT requesting session: {code}")
+            if code in waiting_hosts:
+                host_conn = waiting_hosts.pop(code)
+                print(f"Match found! Linking Client {addr} to Host.")
                 
-                # 1. Wait for and read the authentication message
-                auth_data = conn.recv(1024).decode('utf-8')
+                t1 = threading.Thread(target=forward_stream, args=(host_conn, conn, "Video Stream"))
+                t2 = threading.Thread(target=forward_stream, args=(conn, host_conn, "Command Stream"))
                 
-                if auth_data.startswith("HOST,"):
-                    code = auth_data.split(',')[1]
-                    print(f"Host successfully authenticated with session code: {code}")
-                    
-                    # 2. Now, just receive the screen stream in a loop
-                    # This proves the host is working correctly.
-                    while True:
-                        # First, read the 4-byte size header
-                        size_bytes = receive_all(conn, 4)
-                        if not size_bytes:
-                            print("Host disconnected (failed to read size).")
-                            break
-                        
-                        img_size = int.from_bytes(size_bytes, 'big')
-                        
-                        # Second, read the full image data
-                        img_data = receive_all(conn, img_size)
-                        if not img_data:
-                            print("Host disconnected (failed to read image data).")
-                            break
-                        
-                        # We don't need to do anything with the data,
-                        # just confirm we got it.
-                        print(f"Received image frame of size {img_size} bytes")
+                t1.start()
+                t2.start()
+            else:
+                print(f"Session {code} not found.")
+                conn.close()
+        else:
+            print(f"Unknown role: {role}")
+            conn.close()
+                
+    except Exception as e:
+        print(f"Auth error: {e}")
+        conn.close()
 
-                else:
-                    print("Connection did not authenticate as a HOST. Closing.")
-
-        except KeyboardInterrupt:
-            print("\nServer shutting down.")
-        except Exception as e:
-            print(f"An error occurred: {e}")
+def main():
+    HOST = '0.0.0.0'
+    PORT = 50000
+    
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind((HOST, PORT))
+    server.listen(5)
+    
+    print(f"TCP Router listening on {PORT}...")
+    
+    while True:
+        conn, addr = server.accept()
+        threading.Thread(target=handle_client, args=(conn, addr)).start()
 
 if __name__ == "__main__":
-    run_server()
+    main()
