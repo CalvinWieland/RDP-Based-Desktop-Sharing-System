@@ -4,15 +4,12 @@ from dotenv import load_dotenv
 from pynput.mouse import Controller as MouseController, Button
 from pynput.keyboard import Controller as KeyboardController, Key
 
-# --- Load .env file ---
 load_dotenv()
 
-# --- Configuration ---
 SERVER_IP = os.getenv("SERVER_IP", "127.0.0.1")
 SERVER_PORT = int(os.getenv("SERVER_PORT", 50000))
 SESSION_CODE = os.getenv("SESSION_CODE", "default-code")
 
-# --- Ctypes Bridge Definition ---
 class RawImage(ctypes.Structure):
     _fields_ = [
         ("data", ctypes.POINTER(ctypes.c_uint8)),
@@ -135,7 +132,6 @@ def main():
     # 3. Network Connection
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            # Disable Nagle's Algorithm for lower latency.
             s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
             s.connect((SERVER_IP, SERVER_PORT))
@@ -146,7 +142,7 @@ def main():
             print(f"Authenticated with session code: '{SESSION_CODE}'.")
 
             # Main Streaming Loop
-            target_resolution = (0, 0)  # (w, h); 0,0 = native capture size
+            target_resolution = (0, 0)
 
             while True:
                 # 4. Listen for commands (non-blocking)

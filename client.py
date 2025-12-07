@@ -1,4 +1,3 @@
-# client.py
 import socket, io, pygame, select
 import os
 from dotenv import load_dotenv
@@ -24,17 +23,13 @@ def receive_all(sock, length):
 
 def main():
     pygame.init()
-
-    # Temporary size; we'll replace it with the remote frame size
     screen = pygame.display.set_mode((800, 600))
     pygame.display.set_caption("Remote Desktop Client")
 
-    first_frame = True  # will resize window to match remote once we see the first frame
+    first_frame = True
 
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-        # Disable Nagle's Algorithm for lower latency
         s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
         s.connect((SERVER_IP, SERVER_PORT))
@@ -45,10 +40,8 @@ def main():
 
         running = True
         while running:
-            # 1. Check if network has data (wait max 0.01s)
             ready_to_read, _, _ = select.select([s], [], [], 0.01)
 
-            # --- Receive Video Data ---
             if ready_to_read:
                 size_bytes = receive_all(s, 4)
                 if not size_bytes:
@@ -60,10 +53,8 @@ def main():
                 if img_data:
                     try:
                         image = pygame.image.load(io.BytesIO(img_data))
-
-                        # On the first frame, snap the window to match the remote resolution
                         if first_frame:
-                            remote_size = image.get_size()  # (w, h) of the captured frame
+                            remote_size = image.get_size()
                             screen = pygame.display.set_mode(remote_size)
                             pygame.display.set_caption("Remote Desktop Client")
                             print(f"Resized client window to remote size: {remote_size}")
@@ -72,10 +63,8 @@ def main():
                         screen.blit(image, (0, 0))
                         pygame.display.flip()
                     except Exception as e:
-                        # Ignore bad frames but log once in case it's useful
                         print(f"Frame decode error: {e}")
 
-            # --- Handle Inputs ---
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
@@ -90,11 +79,9 @@ def main():
 
                 elif event.type == pygame.MOUSEMOTION:
                     x, y = event.pos
-                    # Now 1:1 with remote pixels because window == remote frame size
                     cmd = f"mouse_move,{x},{y}\n"
 
                 elif event.type == pygame.MOUSEWHEEL:
-                    # Pygame 2: MOUSEWHEEL has .y for vertical scroll
                     dy = event.y
                     cmd = f"mouse_scroll,{dy}\n"
 
